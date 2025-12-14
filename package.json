@@ -1,0 +1,28 @@
+{
+  "name": "@wwf971/vue-comp-misc",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*": "./src/*"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.4.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  },
+  "peerDependencies": {
+    "vue": ">=3.4.0"
+  }
+}
+
