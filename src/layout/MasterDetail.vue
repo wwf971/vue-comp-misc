@@ -1,14 +1,17 @@
 <template>
   <div class="master-detail-container">
     <!-- Tabs Sidebar -->
-    <div class="tabs-sidebar" :style="{ width: sidebarWidth }">
+    <div class="tabs-sidebar" :style="{ width: isCollapsed ? '40px' : sidebarWidth }">
       <!-- Header -->
       <div class="tabs-header">
-        <h3>{{ title }}</h3>
+        <h3 v-show="!isCollapsed">{{ title }}</h3>
+        <button @click="toggleCollapse" class="collapse-btn" :title="isCollapsed ? 'Expand' : 'Collapse'">
+          <span :class="['collapse-icon', { collapsed: isCollapsed }]">◀</span>
+        </button>
       </div>
 
       <!-- Tab List -->
-      <div class="tabs-list">
+      <div class="tabs-list" v-show="!isCollapsed">
         <div v-for="tab in tabs" :key="tab.key">
           <!-- Tab -->
           <div class="tab-container">
@@ -213,6 +216,7 @@ const tabs = ref<Tab[]>([])
 const activeTabKey = ref<string>('')
 const activeSubtabKey = ref<string | null>(null)
 const displayedPanels = ref<Set<string>>(new Set())
+const isCollapsed = ref(false)
 
 // Computed
 const subtabs = computed(() => config.value.subtabs)
@@ -296,6 +300,10 @@ const onToggleExpand = (tabKey: string) => {
     }
   }
 }
+
+const toggleCollapse = () => {
+  isCollapsed.value = !isCollapsed.value
+}
 </script>
 
 <style scoped>
@@ -317,12 +325,43 @@ const onToggleExpand = (tabKey: string) => {
   padding: 8px;
   border-bottom: 1px solid #ddd;
   background-color: #fff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .tabs-header h3 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
+  flex: 1;
+}
+
+.collapse-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.collapse-btn:hover {
+  background-color: #e8e8e8;
+}
+
+.collapse-icon {
+  display: inline-block;
+  transition: transform 0.2s;
+  font-size: 12px;
+  color: #666;
+}
+
+.collapse-icon.collapsed {
+  transform: rotate(180deg);
 }
 
 .tabs-list {
@@ -365,6 +404,7 @@ const onToggleExpand = (tabKey: string) => {
   border: none;
   cursor: pointer;
   padding: 8px;
+  padding-left: 4px;
   text-align: left;
   font-size: 14px;
   font-weight: 500;
