@@ -3,6 +3,8 @@ import MasterDetail from '../layout/MasterDetail.vue'
 import MasterDetailExample from '../layout/example.vue'
 import TabsOnTop from '../layout/tabs/TabsOnTop.vue'
 import TabsOnTopExample from '../layout/tabs/exampleTabsOnTop.vue'
+import JsonComp from '../layout/json/JsonComp.vue'
+import JsonCompExample from '../layout/json/example.vue'
 
 // Define example components structure
 export interface ComponentExample {
@@ -22,6 +24,11 @@ export const components: Record<string, ComponentExample> = {
     component: TabsOnTop,
     description: 'Horizontal tabs layout with state preservation',
     example: TabsOnTopExample
+  },
+  'JsonComp': {
+    component: JsonComp,
+    description: 'Display and edit deeply nested JSON-like objects with async updates',
+    example: JsonCompExample
   }
 }
 

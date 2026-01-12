@@ -20,9 +20,7 @@
               @click.stop="onToggleExpand(tab.key)"
               class="tab-expand-btn"
             >
-              <span :class="['tab-expand-icon', { expanded: tab.isExpanded }]">
-                ▶
-              </span>
+              <span :class="['tab-expand-icon', { expanded: tab.isExpanded }]" aria-label="Expand/Collapse"></span>
             </button>
 
             <!-- Tab label -->
@@ -389,9 +387,13 @@ const toggleCollapse = () => {
 
 .tab-expand-icon {
   display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 10px solid #666;
+  border-top: 7.5px solid transparent;
+  border-bottom: 7.5px solid transparent;
   transition: transform 0.2s;
-  font-size: 10px;
-  color: #666;
+  margin-right: 5px;
 }
 
 .tab-expand-icon.expanded {

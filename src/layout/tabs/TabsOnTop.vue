@@ -94,7 +94,10 @@ onMounted(() => {
 
 // Method to switch tabs
 const switchToTab = (tabIdentifier) => {
-  const targetKey = tabKeyMap.value[tabIdentifier] || tabIdentifier
+  // Try case-insensitive lookup
+  const lowerIdentifier = String(tabIdentifier).toLowerCase()
+  const targetKey = tabKeyMap.value[tabIdentifier] || tabKeyMap.value[lowerIdentifier] || tabIdentifier
+  
   if (panels.value[targetKey]) {
     activeTabKey.value = targetKey
     emit('tabChange', targetKey)
