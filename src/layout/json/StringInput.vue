@@ -75,10 +75,12 @@ interface Props {
   onConfirm: (parsedValue: any) => void
   onCancel: () => void
   title?: string
+  isObjectOnly?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  title: 'Insert JSON/YAML'
+  title: 'Insert JSON/YAML',
+  isObjectOnly: false
 })
 
 const inputValue = ref('')
@@ -112,7 +114,19 @@ const handleConfirm = () => {
   }
 
   if (result && result.code === 0) {
-    // Success - call onConfirm with parsed data
+    // Success - validate if object-only is required
+    if (props.isObjectOnly) {
+      if (Array.isArray(result.data)) {
+        errorMessage.value = 'Expected an object, but got an array'
+        return
+      }
+      if (typeof result.data !== 'object' || result.data === null) {
+        errorMessage.value = 'Expected an object, but got ' + typeof result.data
+        return
+      }
+    }
+    
+    // Call onConfirm with parsed data
     props.onConfirm(result.data)
     errorMessage.value = ''
   } else {

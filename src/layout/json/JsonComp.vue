@@ -17,7 +17,8 @@
       v-if="stringInputState"
       :onConfirm="handleStringInputConfirm"
       :onCancel="handleStringInputCancel"
-      title="Replace with JSON/YAML"
+      :title="stringInputState.action === 'mergeDictWithJson' ? 'Merge dict with JSON/YAML' : 'Replace with JSON/YAML'"
+      :isObjectOnly="stringInputState.action === 'mergeDictWithJson'"
     />
 
     <!-- Raw JSON Display -->
@@ -44,6 +45,7 @@ import MenuComp, { type MenuCompItem, type MenuCompItemSingle } from '../../menu
 import StringInput from './StringInput.vue'
 import JsonRaw from './JsonRaw.vue'
 import { convertValue } from './typeConvert'
+import { parsePathToSegments, segmentsToPath } from './pathUtils'
 import './JsonComp.css'
 
 /**
@@ -61,18 +63,27 @@ import './JsonComp.css'
  * @param pathPrefix - Internal: path prefix for nested objects
  * @param depth - Internal: current nesting depth
  * @param isArrayItem - Internal: whether this object is an array item
+ * @param keyOperationStateFromParent - Internal: key operation state passed from parent
  */
 interface Props {
   data: any
   isEditable?: boolean
   isKeyEditable?: boolean
   isValueEditable?: boolean
-  onChange?: (path: string, changeData: any) => Promise<{ code: number; message?: string }>
+  onChange?: (path: string, changeData: any) => Promise<{ code: number; message?: string; warning?: string }>
   indent?: number
   typeConversionBehavior?: TypeConversionBehavior
   pathPrefix?: string
   depth?: number
   isArrayItem?: boolean
+  keyOperationStateFromParent?: KeyOperationState | null
+}
+
+interface KeyOperationState {
+  path: string
+  isProcessing?: boolean
+  error?: string | null
+  warning?: string | null
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -83,15 +94,25 @@ const props = withDefaults(defineProps<Props>(), {
   typeConversionBehavior: 'allow',
   pathPrefix: '',
   depth: 0,
-  isArrayItem: false
+  isArrayItem: false,
+  keyOperationStateFromParent: null
 })
 
 const conversionMenu = ref<ConversionMenuRequest | null>(null)
-const stringInputState = ref<{ path: string; oldValue: any; oldType: string } | null>(null)
+const stringInputState = ref<{ path: string; oldValue: any; oldType: string; action?: string; currentKey?: string } | null>(null)
 const rawJsonDisplay = ref<{ data: any; title: string } | null>(null)
+const keyOperationStateInternal = ref<KeyOperationState | null>(null)
 
 // Only root (depth 0) provides context
 const isRoot = computed(() => props.depth === 0)
+
+// Use internal state for root, prop for nested
+const keyOperationState = computed(() => isRoot.value ? keyOperationStateInternal.value : props.keyOperationStateFromParent)
+const setKeyOperationState = (state: KeyOperationState | null) => {
+  if (isRoot.value) {
+    keyOperationStateInternal.value = state
+  }
+}
 
 // Setup context for root component
 if (isRoot.value) {
@@ -117,21 +138,85 @@ const closeMenu = () => {
 const handleStringInputConfirm = async (parsedValue: any) => {
   if (!stringInputState.value || !props.onChange) return
 
-  const { path, oldValue, oldType } = stringInputState.value
+  const { path, oldValue, oldType, action, currentKey } = stringInputState.value
   const parsedType = Array.isArray(parsedValue) ? 'array' : typeof parsedValue
 
+  // Close dialog first
+  stringInputState.value = null
+
+  // For key operations (replace/merge dict), show spinner on the key's row
+  if ((action === 'replaceDictWithJson' || action === 'mergeDictWithJson') && isRoot.value) {
+    const keyPath = path ? `${path}.${currentKey}` : (currentKey || '')
+    setKeyOperationState({ path: keyPath, isProcessing: true, error: null })
+  }
+
+  // Then execute the operation
   try {
-    const changeData = {
-      old: { type: oldType, value: oldValue },
-      new: { type: parsedType, value: parsedValue }
+    let result
+    if (action === 'mergeDictWithJson') {
+      // Merge action: insert entries from parsedValue below the current entry
+      const changeData = {
+        old: { type: oldType, value: oldValue },
+        new: { type: 'object', value: parsedValue },
+        _action: 'mergeDictWithJson',
+        _currentKey: currentKey
+      }
+      result = await props.onChange(path, changeData)
+    } else if (action === 'replaceDictWithJson') {
+      // Replace dict action
+      const changeData = {
+        old: { type: oldType, value: oldValue },
+        new: { type: parsedType, value: parsedValue },
+        _action: 'replaceDictWithJson'
+      }
+      result = await props.onChange(path, changeData)
+    } else {
+      // Default replace action
+      const changeData = {
+        old: { type: oldType, value: oldValue },
+        new: { type: parsedType, value: parsedValue }
+      }
+      result = await props.onChange(path, changeData)
     }
-    await props.onChange(path, changeData)
     
-    // Close the StringInput dialog
-    stringInputState.value = null
+    // Handle result for key operations
+    if ((action === 'replaceDictWithJson' || action === 'mergeDictWithJson') && isRoot.value) {
+      const keyPath = path ? `${path}.${currentKey}` : currentKey!
+      if (result && result.code !== 0) {
+        // Show error on the key's row
+        setKeyOperationState({ path: keyPath, isProcessing: false, error: result.message || 'Operation failed' })
+        // Auto-clear error after 3 seconds
+        setTimeout(() => {
+          if (keyOperationState.value && keyOperationState.value.path === keyPath) {
+            setKeyOperationState(null)
+          }
+        }, 3000)
+      } else if (result && result.warning) {
+        // Show warning on the key's row
+        setKeyOperationState({ path: keyPath, isProcessing: false, warning: result.warning })
+        // Auto-clear warning after 5 seconds
+        setTimeout(() => {
+          if (keyOperationState.value && keyOperationState.value.path === keyPath) {
+            setKeyOperationState(null)
+          }
+        }, 5000)
+      } else {
+        // Clear processing state on success
+        setKeyOperationState(null)
+      }
+    }
   } catch (error) {
     console.error('Failed to apply string input:', error)
-    // Keep dialog open on error
+    // Clear processing state on exception
+    if ((action === 'replaceDictWithJson' || action === 'mergeDictWithJson') && isRoot.value) {
+      const keyPath = path ? `${path}.${currentKey}` : currentKey!
+      setKeyOperationState({ path: keyPath, isProcessing: false, error: 'Operation failed' })
+      setTimeout(() => {
+        if (keyOperationState.value && keyOperationState.value.path === keyPath) {
+          setKeyOperationState(null)
+        }
+      }, 3000)
+    }
   }
 }
 
@@ -405,6 +490,47 @@ const handleMenuItemClick = async (item: MenuCompItemSingle) => {
       // Close the menu
       closeMenu()
       return // Don't close menu at end
+    } else if (action === 'replaceDictWithJson') {
+      // Replace parent dict with JSON/YAML object
+      // Compute parent path (remove last segment from path)
+      const segments = parsePathToSegments(path)
+      const parentSegments = segments.slice(0, -1)
+      const parentPath = segmentsToPath(parentSegments)
+      
+      // Get the current parent dict value
+      const parentData = getContainerData(parentPath)
+      
+      // Open StringInput dialog with parent path and parent data
+      stringInputState.value = {
+        path: parentPath,
+        oldValue: parentData,
+        oldType: 'object'
+      }
+      // Close the menu
+      closeMenu()
+      return // Don't close menu at end
+    } else if (action === 'mergeDictWithJson') {
+      // Merge JSON dict entries below the current entry
+      // Compute parent path (remove last segment from path)
+      const segments = parsePathToSegments(path)
+      const currentKey = segments[segments.length - 1].key || ''
+      const parentSegments = segments.slice(0, -1)
+      const parentPath = segmentsToPath(parentSegments)
+      
+      // Get the current parent dict value
+      const parentData = getContainerData(parentPath)
+      
+      // Open StringInput dialog with parent path and action info
+      stringInputState.value = {
+        path: parentPath,
+        oldValue: parentData,
+        oldType: 'object',
+        action: 'mergeDictWithJson',
+        currentKey: currentKey
+      }
+      // Close the menu
+      closeMenu()
+      return // Don't close menu at end
     } else if (action === 'viewRawJson') {
       // View raw JSON of parent container
       const containerData = getContainerData(path)
@@ -464,6 +590,20 @@ const getMenuItems = (): MenuCompItem[] => {
       type: 'item',
       name: 'Replace with JSON',
       data: { action: 'replaceWithJson' }
+    })
+  }
+  
+  // Add "Replace dict with JSON" and "Merge dict with JSON" for keys
+  if (menuType === 'key') {
+    items.push({
+      type: 'item',
+      name: 'Replace dict with JSON',
+      data: { action: 'replaceDictWithJson' }
+    })
+    items.push({
+      type: 'item',
+      name: 'Merge dict with JSON',
+      data: { action: 'mergeDictWithJson' }
     })
   }
   
@@ -726,7 +866,8 @@ const renderContent: any = (componentProps: any, SelfComponent: any): any => {
               indent: componentProps.indent,
               pathPrefix: itemPath,
               depth: componentProps.depth + 1,
-              isArrayItem: true
+              isArrayItem: true,
+              keyOperationStateFromParent: componentProps.keyOperationStateFromParent
             })
           ]),
           !isLastItem && isPrimitive ? h('span', { class: 'json-comma' }, ',') : null
@@ -804,7 +945,8 @@ const renderContent: any = (componentProps: any, SelfComponent: any): any => {
             isKeyEditable: componentProps.isKeyEditable,
             isValueEditable: componentProps.isValueEditable,
             onChange: componentProps.onChange,
-            depth: componentProps.depth
+            depth: componentProps.depth,
+            keyOperationState: componentProps.keyOperationStateFromParent
           }, () => [
             h(SelfComponent, {
               data: value,
@@ -814,7 +956,8 @@ const renderContent: any = (componentProps: any, SelfComponent: any): any => {
               onChange: componentProps.onChange,
               indent: componentProps.indent,
               pathPrefix: keyPath,
-              depth: componentProps.depth + 1
+              depth: componentProps.depth + 1,
+              keyOperationStateFromParent: componentProps.keyOperationStateFromParent
             })
           ]),
           !isLastItem && isPrimitive ? h('span', { class: 'json-comma' }, ',') : null
@@ -859,12 +1002,18 @@ const RecursiveJsonComp: any = defineComponent({
     indent: { type: Number, default: 20 },
     pathPrefix: { type: String, default: '' },
     depth: { type: Number, default: 0 },
-    isArrayItem: { type: Boolean, default: false }
+    isArrayItem: { type: Boolean, default: false },
+    keyOperationStateFromParent: { type: Object, default: null }
   },
   setup(recursiveProps: any) {
     return () => {
+      // Pass through keyOperationStateFromParent to child components
+      const propsWithState = {
+        ...recursiveProps,
+        keyOperationStateFromParent: recursiveProps.keyOperationStateFromParent || null
+      }
       // Just render the same logic, but use RecursiveJsonComp for recursive calls
-      return renderContent(recursiveProps, RecursiveJsonComp)
+      return renderContent(propsWithState, RecursiveJsonComp)
     }
   }
 })
@@ -873,7 +1022,13 @@ const RecursiveJsonComp: any = defineComponent({
 const ContentRenderer = defineComponent({
   name: 'JsonContentRenderer',
   setup() {
-    return () => renderContent(props, RecursiveJsonComp)
+    return () => {
+      const propsWithState = {
+        ...props,
+        keyOperationStateFromParent: keyOperationState.value
+      }
+      return renderContent(propsWithState, RecursiveJsonComp)
+    }
   }
 })
 </script>

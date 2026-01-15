@@ -1,5 +1,5 @@
 <template>
-  <div style="padding: 20px; max-width: 900px">
+  <div style="max-width: 900px">
     <h3 style="margin-top: 0; margin-bottom: 8px">1. Simple Nested Object (Read-Only)</h3>
     <div style="background: #f9f9f9; padding: 12px; border-radius: 3px; margin-bottom: 20px">
       <JsonComp 
@@ -14,11 +14,11 @@
     </p>
     <div style="background: #f9f9f9; padding: 12px; border-radius: 3px; margin-bottom: 20px">
       <JsonComp 
-        :data="editableData" 
+        :data="valueOnlyEditableData" 
         :isEditable="true"
         :isKeyEditable="false"
         :isValueEditable="true"
-        :onChange="handleEditableChange"
+        :onChange="handleValueOnlyEditableChange"
       />
     </div>
 
@@ -28,11 +28,11 @@
     </p>
     <div style="background: #f9f9f9; padding: 12px; border-radius: 3px; margin-bottom: 20px">
       <JsonComp 
-        :data="complexData" 
+        :data="fullyEditableData" 
         :isEditable="true"
         :isKeyEditable="true"
         :isValueEditable="true"
-        :onChange="handleComplexChange"
+        :onChange="handleFullyEditableChange"
       />
     </div>
 
@@ -92,8 +92,10 @@
 </template>
 
 <script setup lang="ts">
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { ref } from 'vue'
 import JsonComp from './JsonComp.vue'
+import { parsePathToSegments, navigateToPath } from './pathUtils'
 
 // Example 1: Simple nested object (read-only)
 const simpleData = {
@@ -107,8 +109,8 @@ const simpleData = {
   }
 }
 
-// Example 2: Editable values
-const editableData = ref({
+// Example 2: Values editable, keys read-only
+const valueOnlyEditableData = ref({
   username: "johndoe",
   email: "john@example.com",
   age: 30,
@@ -116,8 +118,8 @@ const editableData = ref({
   verified: false
 })
 
-// Example 3: Complex nested structure
-const complexData = ref({
+// Example 3: Complex nested structure - fully editable
+const fullyEditableData = ref({
   user: {
     id: 123,
     name: "Alice Smith",
@@ -167,619 +169,549 @@ const mongoDoc = ref({
 
 const message = ref('')
 
-// Handler for editable data
-const handleEditableChange = async (path: string, changeData: any) => {
-  const { old, new: newData, _action, _parentPath, _key } = changeData
-  console.log(`Change:`, { path, _action, _parentPath, changeData })
-  
-  // For pseudo-related actions, execute immediately without delay/errors (just UI state)
-  switch (_action) {
-    case 'addEntry':
-    case 'addEntryAbove':
-    case 'addEntryBelow':
-    case 'cancelCreate':
-      const keys = path.split('.')
-      
-      switch (_action) {
-        case 'addEntry': {
-          // Add pseudo entry to empty dict - direct mutation
-          const targetObj = keys.length === 0 || keys[0] === '' ? editableData.value : keys.reduce((obj: any, key) => obj[key], editableData.value)
-          const pseudoKey = `__pseudo__${Date.now()}`
-          targetObj[pseudoKey] = { __pseudo__: true }
-          return { code: 0, message: 'Success' }
-        }
-        case 'addEntryAbove':
-        case 'addEntryBelow': {
-          // Add pseudo entry above/below current entry - direct mutation
-          const pseudoKey = `__pseudo__${Date.now()}`
-          ;(editableData.value as any)[pseudoKey] = { 
-            __pseudo__: true,
-            position: _action === 'addEntryAbove' ? 'above' : 'below', 
-            referenceKey: keys[0]
-          }
-          return { code: 0, message: 'Success' }
-        }
-        case 'cancelCreate': {
-          // Remove pseudo entry - direct mutation
-          const parentObj = keys.length === 0 || keys[0] === '' ? editableData.value : keys.slice(0, -1).reduce((obj: any, key) => obj[key], editableData.value)
-          const pseudoKey = keys[keys.length - 1]
-          delete parentObj[pseudoKey]
-          return { code: 0, message: 'Success' }
-        }
-      }
-  }
-  
-  // For actual data operations, apply delay and error simulation
-  message.value = `Updating ${path}...`
-  
-  // Simulate network delay (optional - comment out for instant updates)
-  await new Promise(resolve => setTimeout(resolve, 300))
+// Unified handler factory function
+const createUnifiedHandler = (setData: (fn: (prev: any) => any) => void, options: any = {}) => {
+  const {
+    simulateDelay = true,
+    delayMs = 200,
+    simulateErrors = false,
+    errorRate = 0.2,
+    logPrefix = 'Change'
+  } = options
 
-  // Random success/failure (80% success rate)
-  const success = Math.random() > 0.2
-
-  if (success) {
-    const keys = path.split('.')
+  return async (path: string, changeData: any) => {
+    const { old, new: newData, _action, _parentPath, _itemPath, _keyRename, _key } = changeData
+    console.log(`${logPrefix}:`, { path, _action, _parentPath, _itemPath, changeData })
     
+    // For pseudo-related actions, execute immediately without delay/errors (just UI state)
     switch (_action) {
-      case 'createEntry': {
-        // Convert pseudo to real entry: delete the pseudo key, add real key - direct mutation
-        const parentObj = keys.length === 0 || keys[0] === '' ? editableData.value : keys.slice(0, -1).reduce((obj: any, key) => obj[key], editableData.value)
-        const pseudoKey = keys[keys.length - 1]
-        const pseudoData = parentObj[pseudoKey]
-        
-        // Check if pseudo has position info
-        if (pseudoData && pseudoData.position && pseudoData.referenceKey) {
-          // Reconstruct parent object with correct order
-          const newParentObj: any = {}
-          for (const key of Object.keys(parentObj)) {
-            if (key === pseudoKey) continue // Skip the pseudo key
-            
-            // Insert new key at the right position
-            if (key === pseudoData.referenceKey) {
-              if (pseudoData.position === 'above') {
-                newParentObj[_key] = newData.value
-                newParentObj[key] = parentObj[key]
+      case 'addEntry':
+      case 'addEntryAbove':
+      case 'addEntryBelow':
+      case 'addItem':
+      case 'addItemAbove':
+      case 'addItemBelow':
+      case 'cancelCreate':
+        setData((prevData: any) => {
+          const result = JSON.parse(JSON.stringify(prevData) as string)
+          
+          // Helper to parse path (handles both dict paths and array paths)
+          const parsePath = (path: string) => {
+            if (path.includes('..')) {
+              // Array path - keep it for later processing
+              return path
+            } else {
+              // Dict path - split and filter
+              return path.split('.').filter(p => p !== '')
+            }
+          }
+          
+          const pathParts = parsePath(path)
+          
+          switch (_action) {
+            case 'addEntry': {
+              // Add pseudo entry to empty dict
+              const isSimplePath = Array.isArray(pathParts)
+              const targetObj = isSimplePath 
+                ? (pathParts.length === 0 ? result : pathParts.reduce((obj: any, key: string) => obj[key], result))
+                : result
+              const pseudoKey = `__pseudo__${Date.now()}`
+              targetObj[pseudoKey] = { __pseudo__: true }
+              return result
+            }
+            case 'addEntryAbove':
+            case 'addEntryBelow': {
+              // Add pseudo entry above/below current entry
+              const isSimplePath = Array.isArray(pathParts)
+              const parentObj: any = isSimplePath && pathParts.length === 1 
+                ? result 
+                : (isSimplePath ? pathParts.slice(0, -1).reduce((obj: any, key: string) => obj[key], result) : result)
+              const pseudoKey = `__pseudo__${Date.now()}`
+              const referenceKey = isSimplePath ? pathParts[pathParts.length - 1] : pathParts
+              parentObj[pseudoKey] = { 
+                __pseudo__: true,
+                position: _action === 'addEntryAbove' ? 'above' : 'below', 
+                referenceKey: referenceKey
+              }
+              return result
+            }
+            case 'addItem':
+            case 'addItemAbove':
+            case 'addItemBelow': {
+              // Add pseudo item to array
+              const pathIsArray = typeof pathParts === 'string' && pathParts.includes('..')
+              if (pathIsArray) {
+                // Parse path like "tags..0" or "user.roles..2"
+                const parts = (pathParts as string).split('..')
+                let current: any = result
+                
+                // First part: navigate through object keys
+                if (parts[0]) {
+                  const objKeys = parts[0].split('.').filter((k: string) => k !== '')
+                  for (const key of objKeys) {
+                    current = current[key]
+                  }
+                }
+                
+                // Remaining parts: navigate through array indices (except last)
+                for (let i = 1; i < parts.length - 1; i++) {
+                  const index = parseInt(parts[i])
+                  current = current[index]
+                }
+                
+                const targetIndex = parseInt(parts[parts.length - 1])
+                if (_action === 'addItemAbove') {
+                  current.splice(targetIndex, 0, { isPseudo: true })
+                } else if (_action === 'addItemBelow') {
+                  current.splice(targetIndex + 1, 0, { isPseudo: true })
+                }
               } else {
-                newParentObj[key] = parentObj[key]
-                newParentObj[_key] = newData.value
+                // Empty array or root array - add to it
+                const targetArray = Array.isArray(pathParts) && pathParts.length === 0 
+                  ? result 
+                  : (Array.isArray(pathParts) ? pathParts.reduce((obj: any, key: string) => obj[key], result) : result)
+                if (Array.isArray(targetArray)) {
+                  targetArray.push({ isPseudo: true })
+                }
+              }
+              return result
+            }
+            case 'cancelCreate': {
+              // Remove pseudo entry/item
+              if (typeof pathParts === 'string' && pathParts.includes('..')) {
+                // Array item - parse path like "tags..0"
+                const parts = (pathParts as string).split('..')
+                let current: any = result
+                
+                // First part: navigate through object keys
+                if (parts[0]) {
+                  const objKeys = parts[0].split('.').filter((k: string) => k !== '')
+                  for (const key of objKeys) {
+                    current = current[key]
+                  }
+                }
+                
+                // Remaining parts: navigate through array indices (except last)
+                for (let i = 1; i < parts.length - 1; i++) {
+                  const index = parseInt(parts[i])
+                  current = current[index]
+                }
+                
+                const targetIndex = parseInt(parts[parts.length - 1])
+                current.splice(targetIndex, 1)
+              } else {
+                // Dict entry - delete the pseudo key
+                const parentObj: any = Array.isArray(pathParts) && pathParts.length === 0 
+                  ? result 
+                  : (Array.isArray(pathParts) ? pathParts.slice(0, -1).reduce((obj: any, key: string) => obj[key], result) : result)
+                const pseudoKey: any = Array.isArray(pathParts) ? pathParts[pathParts.length - 1] : pathParts
+                delete parentObj[pseudoKey]
+              }
+              return result
+            }
+          }
+          return result
+        })
+        return { code: 0, message: 'Success' }
+    }
+    
+    // For actual data operations, apply delay and optional error simulation
+    if (simulateErrors) {
+      message.value = `Updating ${path}...`
+    }
+    
+    if (simulateDelay) {
+      await new Promise(resolve => setTimeout(resolve, delayMs))
+    }
+
+    // Simulate random errors if enabled
+    if (simulateErrors) {
+      const success = Math.random() > errorRate
+      if (!success) {
+        message.value = `✗ Failed to update ${path} (simulated error)`
+        setTimeout(() => { message.value = '' }, 3000)
+        return { code: -1, message: 'Failed to update (simulated error)' }
+      }
+    }
+
+    setData((prevData: any) => {
+      const result = JSON.parse(JSON.stringify(prevData) as string)
+      const segments = parsePathToSegments(path)
+      
+      // Handle key rename (special case)
+      if (_keyRename) {
+        const parent = navigateToPath(result, segments, true)
+        const lastSeg = segments[segments.length - 1]
+        const oldKey = lastSeg.key
+        const newKey = newData.value
+        const value = parent[oldKey!]
+        delete parent[oldKey!]
+        parent[newKey] = value
+      } else if (_action === 'mergeDictWithJson') {
+        // Merge dict entries below the current entry
+        const currentKey = changeData._currentKey
+        const parentObj: any = navigateToPath(result, segments)
+        
+        console.log('[example mergeDictWithJson] path:', path, 'segments:', segments)
+        console.log('[example mergeDictWithJson] currentKey:', currentKey)
+        console.log('[example mergeDictWithJson] parentObj keys:', Object.keys(parentObj))
+        
+        // Get all existing keys (excluding pseudo keys)
+        const existingKeys = Object.keys(parentObj).filter((k: string) => !k.startsWith('__pseudo__'))
+        const currentIndex = existingKeys.indexOf(currentKey)
+        
+        console.log('[example mergeDictWithJson] existingKeys:', existingKeys)
+        console.log('[example mergeDictWithJson] currentIndex:', currentIndex)
+        
+        // Get keys from the new object to merge
+        const newKeys = Object.keys(newData.value)
+        
+        console.log('[example mergeDictWithJson] newKeys to merge:', newKeys)
+        
+        // Check if any of the new keys are numeric-looking (would be auto-sorted by JavaScript)
+        const hasNumericKeys = newKeys.some((k: string) => /^\d+$/.test(k))
+        if (hasNumericKeys) {
+          console.warn('[example mergeDictWithJson] Warning: Numeric-looking keys detected. JavaScript will automatically sort them to the beginning of the object.')
+        }
+        
+        // Build array of all keys in desired order
+        const keysInOrder = [
+          ...existingKeys.slice(0, currentIndex + 1),  // Keys up to and including current
+          ...newKeys,                                    // New keys to insert
+          ...existingKeys.slice(currentIndex + 1)       // Remaining keys
+        ]
+        
+        console.log('[example mergeDictWithJson] Desired key order:', keysInOrder)
+        
+        // Build new object by iterating in desired order
+        // Note: JavaScript will still reorder numeric-looking keys to the front
+        const newObj: any = {}
+        for (const key of keysInOrder) {
+          if (key in parentObj) {
+            newObj[key] = parentObj[key]
+          } else if (key in newData.value) {
+            newObj[key] = newData.value[key]
+          }
+        }
+        
+        console.log('[example mergeDictWithJson] newObj keys (actual order after JS reordering):', Object.keys(newObj))
+        
+        // Replace parent object keys with newObj
+        // Delete all existing keys first
+        Object.keys(parentObj).forEach((k: string) => delete parentObj[k])
+        
+        // Re-add keys from newObj (will maintain newObj's order, including JS's auto-sort for numeric keys)
+        Object.keys(newObj).forEach((k: string) => {
+          parentObj[k] = newObj[k]
+        })
+        
+        console.log('[example mergeDictWithJson] parentObj keys after merge:', Object.keys(parentObj))
+        
+        // Return success, but with warning if numeric keys were detected
+        if (hasNumericKeys) {
+          // We need to signal this back through the return value
+          // Store a flag that will be checked by the caller
+          changeData._hasNumericKeyWarning = true
+        }
+      } else if (_action === 'moveEntryUp' || _action === 'moveEntryDown') {
+        // Move dict entry up or down
+        const parentObj: any = segments.length === 0 ? result : navigateToPath(result, segments, true)
+        const currentKey = segments[segments.length - 1].key
+        const keys = Object.keys(parentObj).filter((k: string) => !k.startsWith('__pseudo__'))
+        const currentIndex = keys.indexOf(currentKey!)
+        const newIndex = _action === 'moveEntryUp' ? currentIndex - 1 : currentIndex + 1
+        
+        if (newIndex >= 0 && newIndex < keys.length) {
+          // Rebuild object with swapped order
+          const newObj: any = {}
+          keys.forEach((k: string, idx: number) => {
+            if (idx === currentIndex) return
+            if (idx === newIndex) {
+              if (_action === 'moveEntryUp') {
+                newObj[currentKey!] = parentObj[currentKey!]
+                newObj[k] = parentObj[k]
+              } else {
+                newObj[k] = parentObj[k]
+                newObj[currentKey!] = parentObj[currentKey!]
               }
             } else {
-              newParentObj[key] = parentObj[key]
+              newObj[k] = parentObj[k]
+            }
+          })
+          
+          keys.forEach((k: string) => delete parentObj[k])
+          Object.assign(parentObj, newObj)
+        }
+      } else if (_action === 'moveEntryToTop' || _action === 'moveEntryToBottom') {
+        // Move dict entry to top or bottom
+        const parentObj: any = segments.length === 0 ? result : navigateToPath(result, segments, true)
+        const currentKey = segments[segments.length - 1].key
+        const keys = Object.keys(parentObj).filter((k: string) => !k.startsWith('__pseudo__'))
+        
+        const newObj: any = {}
+        if (_action === 'moveEntryToTop') {
+          newObj[currentKey!] = parentObj[currentKey!]
+          keys.forEach((k: string) => {
+            if (k !== currentKey) {
+              newObj[k] = parentObj[k]
+            }
+          })
+        } else {
+          keys.forEach((k: string) => {
+            if (k !== currentKey) {
+              newObj[k] = parentObj[k]
+            }
+          })
+          newObj[currentKey!] = parentObj[currentKey!]
+        }
+        
+        keys.forEach((k: string) => delete parentObj[k])
+        Object.assign(parentObj, newObj)
+      } else if (_action === 'moveItemUp' || _action === 'moveItemDown') {
+        // Move array item up or down
+        const parentArray: any = navigateToPath(result, segments, true)
+        const currentIndex = segments[segments.length - 1].index
+          
+        if (Array.isArray(parentArray)) {
+          const realIndices: number[] = []
+          parentArray.forEach((item: any, idx: number) => {
+            if (!(item && typeof item === 'object' && item.isPseudo)) {
+              realIndices.push(idx)
+            }
+          })
+          
+          const posInReal = realIndices.indexOf(currentIndex!)
+          if (posInReal >= 0) {
+            const targetPos = _action === 'moveItemUp' ? posInReal - 1 : posInReal + 1
+            if (targetPos >= 0 && targetPos < realIndices.length) {
+              const targetIndex = realIndices[targetPos]
+              const temp = parentArray[currentIndex!]
+              parentArray[currentIndex!] = parentArray[targetIndex]
+              parentArray[targetIndex] = temp
             }
           }
-          // Replace parent object keys
-          Object.keys(parentObj).forEach(k => delete parentObj[k])
-          Object.assign(parentObj, newParentObj)
-        } else {
-          // No position info - just delete pseudo and add at end
-          delete parentObj[pseudoKey]
-          parentObj[_key] = newData.value
         }
-        // Trigger reactivity for nested property changes
-        triggerRef(editableData)
-        break
-      }
-      case 'deleteEntry': {
-        // Delete this entry - direct mutation
-        let current: any = editableData.value
-        for (let i = 0; i < keys.length - 1; i++) {
-          current = current[keys[i]]
-        }
-        delete current[keys[keys.length - 1]]
-        // Trigger reactivity for nested property changes
-        triggerRef(editableData)
-        break
-      }
-      case 'deleteParentDict': {
-        // Delete the parent dict - direct mutation
-        if (_parentPath === '') {
-          editableData.value = {} as any  // Parent is root - must replace
-        } else {
-          const parentParts = _parentPath.split('.').filter((p: string) => p !== '')
-          let current: any = editableData.value
-          for (let i = 0; i < parentParts.length - 1; i++) {
-            current = current[parentParts[i]]
-          }
-          const lastKey = parentParts[parentParts.length - 1]
-          current[lastKey] = null
-          // Trigger reactivity for nested property changes
-          triggerRef(editableData)
-        }
-        break
-      }
-      case 'clearParentDict': {
-        // Clear all entries in parent dict - direct mutation
-        if (_parentPath === '') {
-          editableData.value = {} as any  // Parent is root - must replace
-        } else {
-          const parentParts = _parentPath.split('.').filter((p: string) => p !== '')
-          let current: any = editableData.value
-          for (let i = 0; i < parentParts.length - 1; i++) {
-            current = current[parentParts[i]]
-          }
-          current[parentParts[parentParts.length - 1]] = {}
-          // Trigger reactivity for nested property changes
-          triggerRef(editableData)
-        }
-        break
-      }
-      default: {
-        // Normal value change - direct mutation
-        let current: any = editableData.value
-        for (let i = 0; i < keys.length - 1; i++) {
-          current = current[keys[i]]
-        }
+      } else if (_action === 'moveItemToTop' || _action === 'moveItemToBottom') {
+        // Move array item to top or bottom
+        const parentArray: any = navigateToPath(result, segments, true)
+        const currentIndex = segments[segments.length - 1].index
         
-        // Determine final value based on whether types match
-        let finalValue = newData.value
-        if (old.type === newData.type && newData.type === 'number' && typeof newData.value === 'string') {
-          // User edited a number field - parse string input to number
-          finalValue = !isNaN(newData.value) ? Number(newData.value) : old.value
-        } else if (old.type !== newData.type) {
-          // Type conversion - use the converted value directly (already correct type)
-          finalValue = newData.value
-        } else {
-          // Same type - use new value as is
-          finalValue = newData.value
+        if (Array.isArray(parentArray)) {
+          const realIndices: number[] = []
+          parentArray.forEach((item: any, idx: number) => {
+            if (!(item && typeof item === 'object' && item.isPseudo)) {
+              realIndices.push(idx)
+            }
+          })
+          
+          const posInReal = realIndices.indexOf(currentIndex!)
+          if (posInReal >= 0) {
+            const item = parentArray[currentIndex!]
+            parentArray.splice(currentIndex!, 1)
+            
+            if (_action === 'moveItemToTop') {
+              parentArray.unshift(item)
+            } else {
+              parentArray.push(item)
+            }
+          }
         }
-        
-        current[keys[keys.length - 1]] = finalValue
-        // Trigger reactivity for nested property changes
-        triggerRef(editableData)
+      } else {
+        // Handle specific actions
+        switch (_action) {
+          case 'createEntry': {
+            // Convert pseudo to real entry
+            const parentObj: any = segments.length === 0 ? result : navigateToPath(result, segments, true)
+            const pseudoKey = segments[segments.length - 1].key
+            const pseudoData = parentObj[pseudoKey!]
+            
+            if (pseudoData && pseudoData.position && pseudoData.referenceKey) {
+              const newParentObj: any = {}
+              for (const key of Object.keys(parentObj)) {
+                if (key === pseudoKey) continue
+                
+                if (key === pseudoData.referenceKey) {
+                  if (pseudoData.position === 'above') {
+                    newParentObj[_key] = newData.value
+                    newParentObj[key] = parentObj[key]
+                  } else {
+                    newParentObj[key] = parentObj[key]
+                    newParentObj[_key] = newData.value
+                  }
+                } else {
+                  newParentObj[key] = parentObj[key]
+                }
+              }
+              Object.keys(parentObj).forEach((k: string) => delete parentObj[k])
+              Object.assign(parentObj, newParentObj)
+            } else {
+              delete parentObj[pseudoKey!]
+              parentObj[_key] = newData.value
+            }
+            
+            return result
+          }
+          case 'createItem': {
+            // Convert pseudo array item to real item
+            const parentArray: any = navigateToPath(result, segments, true)
+            const targetIndex = segments[segments.length - 1].index
+            parentArray[targetIndex!] = newData.value
+            if (parentArray[targetIndex!] && typeof parentArray[targetIndex!] === 'object') {
+              delete parentArray[targetIndex!].isPseudo
+            }
+            return result
+          }
+          case 'deleteEntry': {
+            const parent: any = navigateToPath(result, segments, true)
+            const lastSeg = segments[segments.length - 1]
+            delete parent[lastSeg.key!]
+            break
+          }
+          case 'deleteParentDict': {
+            if (_parentPath === '') {
+              return {}
+            }
+            const parentParts = _parentPath.split('.').filter((p: string) => p !== '' && !p.startsWith('.'))
+            let current: any = result
+            for (let i = 0; i < parentParts.length - 1; i++) {
+              current = current[parentParts[i]]
+            }
+            const lastKey = parentParts[parentParts.length - 1]
+            if (Array.isArray(current)) {
+              current.splice(parseInt(lastKey), 1)
+            } else {
+              current[lastKey] = null
+            }
+            break
+          }
+          case 'clearParentDict': {
+            if (_parentPath === '') {
+              return {}
+            }
+            const parentParts = _parentPath.split('.').filter((p: string) => p !== '' && !p.startsWith('.'))
+            let current: any = result
+            for (let i = 0; i < parentParts.length - 1; i++) {
+              current = current[parentParts[i]]
+            }
+            current[parentParts[parentParts.length - 1]] = {}
+            break
+          }
+          case 'deleteArrayItem': {
+            const parentArray: any = navigateToPath(result, segments, true)
+            const targetIndex = segments[segments.length - 1].index
+            parentArray.splice(targetIndex!, 1)
+            break
+          }
+          case 'deleteParentArray': {
+            if (_parentPath === '') {
+              return []
+            }
+            const parentParts = _parentPath.split('.').filter((p: string) => p !== '' && !p.startsWith('.'))
+            let current: any = result
+            for (let i = 0; i < parentParts.length - 1; i++) {
+              current = current[parentParts[i]]
+            }
+            const lastKey = parentParts[parentParts.length - 1]
+            if (Array.isArray(current)) {
+              current.splice(parseInt(lastKey), 1)
+            } else {
+              current[lastKey] = null
+            }
+            break
+          }
+          case 'clearParentArray': {
+            if (_parentPath === '') {
+              return []
+            }
+            const parentParts = _parentPath.split('.').filter((p: string) => p !== '' && !p.startsWith('.'))
+            let current: any = result
+            for (let i = 0; i < parentParts.length - 1; i++) {
+              current = current[parentParts[i]]
+            }
+            current[parentParts[parentParts.length - 1]] = []
+            break
+          }
+          default: {
+            // Normal value change
+            // Special case: empty path means replace root
+            if (segments.length === 0) {
+              return newData.value
+            }
+            
+            const parent: any = navigateToPath(result, segments, true)
+            const lastSeg = segments[segments.length - 1]
+            
+            let finalValue = newData.value
+            if (old.type === newData.type && newData.type === 'number' && typeof newData.value === 'string') {
+              finalValue = !isNaN(newData.value) ? Number(newData.value) : old.value
+            } else if (old.type !== newData.type) {
+              finalValue = newData.value
+            } else {
+              finalValue = newData.value
+            }
+            
+            if (lastSeg.type === 'arr') {
+              parent[lastSeg.index!] = finalValue
+            } else {
+              parent[lastSeg.key!] = finalValue
+            }
+          }
+        }
+      }
+      
+      return result
+    })
+
+    if (simulateErrors) {
+      message.value = `✓ Updated ${path} successfully`
+      setTimeout(() => { message.value = '' }, 3000)
+    }
+    
+    // Check if there's a numeric key warning to return
+    if (changeData._hasNumericKeyWarning) {
+      return { 
+        code: 0, 
+        message: 'Success', 
+        warning: 'Numeric keys were reordered by JavaScript' 
       }
     }
-
-    message.value = `✓ Updated ${path} successfully`
-    setTimeout(() => { message.value = '' }, 3000)
+    
     return { code: 0, message: 'Success' }
-  } else {
-    message.value = `✗ Failed to update ${path} (simulated error)`
-    setTimeout(() => { message.value = '' }, 3000)
-    return { code: -1, message: 'Failed to update (simulated error)' }
   }
 }
 
-// Handler for complex nested data
-const handleComplexChange = async (path: string, changeData: any) => {
-  const { old, new: newData, _action, _key, _parentPath } = changeData
-  console.log('Complex change:', { path, _action, changeData })
-  
-  // For pseudo-related actions, execute immediately without delay (just UI state)
-  switch (_action) {
-    case 'addEntry':
-    case 'addEntryAbove':
-    case 'addEntryBelow':
-    case 'cancelCreate':
-      const keys = path.split('.')
-      
-      switch (_action) {
-        case 'addEntry': {
-          const targetObj = keys.length === 0 || keys[0] === '' ? complexData.value : keys.reduce((obj: any, key) => obj[key], complexData.value)
-          const pseudoKey = `__pseudo__${Date.now()}`
-          targetObj[pseudoKey] = { __pseudo__: true }
-          return { code: 0, message: 'Success' }
-        }
-        case 'addEntryAbove':
-        case 'addEntryBelow': {
-          const pseudoKey = `__pseudo__${Date.now()}`
-          ;(complexData.value as any)[pseudoKey] = { 
-            __pseudo__: true,
-            position: _action === 'addEntryAbove' ? 'above' : 'below', 
-            referenceKey: keys[0]
-          }
-          return { code: 0, message: 'Success' }
-        }
-        case 'cancelCreate': {
-          const parentObj = keys.length === 0 || keys[0] === '' ? complexData.value : keys.slice(0, -1).reduce((obj: any, key) => obj[key], complexData.value)
-          const pseudoKey = keys[keys.length - 1]
-          delete parentObj[pseudoKey]
-          return { code: 0, message: 'Success' }
-        }
-      }
+// Create handlers using the unified function
+const handleValueOnlyEditableChange = createUnifiedHandler(
+  (fn: (prev: any) => any) => { valueOnlyEditableData.value = fn(valueOnlyEditableData.value) }, 
+  { 
+    simulateErrors: true, 
+    errorRate: 0.2,
+    delayMs: 300,
+    logPrefix: 'Value-only edit'
   }
-  
-  // For actual data operations, apply delay
-  await new Promise(resolve => setTimeout(resolve, 200))
+)
 
-  const keys = path.split('.')
-  
-  switch (_action) {
-    case 'createEntry': {
-      const parentObj = keys.length === 0 || keys[0] === '' ? complexData.value : keys.slice(0, -1).reduce((obj: any, key) => obj[key], complexData.value)
-      const pseudoKey = keys[keys.length - 1]
-      const pseudoData = parentObj[pseudoKey]
-      
-      if (pseudoData && pseudoData.position && pseudoData.referenceKey) {
-        const newParentObj: any = {}
-        for (const key of Object.keys(parentObj)) {
-          if (key === pseudoKey) continue
-          if (key === pseudoData.referenceKey) {
-            if (pseudoData.position === 'above') {
-              newParentObj[_key] = newData.value
-              newParentObj[key] = parentObj[key]
-            } else {
-              newParentObj[key] = parentObj[key]
-              newParentObj[_key] = newData.value
-            }
-          } else {
-            newParentObj[key] = parentObj[key]
-          }
-        }
-        Object.keys(parentObj).forEach(k => delete parentObj[k])
-        Object.assign(parentObj, newParentObj)
-      } else {
-        delete parentObj[pseudoKey]
-        parentObj[_key] = newData.value
-      }
-      break
-    }
-    case 'deleteEntry': {
-      let current: any = complexData.value
-      for (let i = 0; i < keys.length - 1; i++) {
-        current = current[keys[i]]
-      }
-      delete current[keys[keys.length - 1]]
-      break
-    }
-    case 'deleteParentDict': {
-      if (_parentPath === '') {
-        complexData.value = {} as any
-      } else {
-        const parentParts = _parentPath.split('.').filter((p: string) => p !== '')
-        let current: any = complexData.value
-        for (let i = 0; i < parentParts.length - 1; i++) {
-          current = current[parentParts[i]]
-        }
-        const lastKey = parentParts[parentParts.length - 1]
-        current[lastKey] = null
-      }
-      break
-    }
-    case 'clearParentDict': {
-      if (_parentPath === '') {
-        complexData.value = {} as any
-      } else {
-        const parentParts = _parentPath.split('.').filter((p: string) => p !== '')
-        let current: any = complexData.value
-        for (let i = 0; i < parentParts.length - 1; i++) {
-          current = current[parentParts[i]]
-        }
-        current[parentParts[parentParts.length - 1]] = {}
-      }
-      break
-    }
-    default: {
-      // Normal value change - direct mutation
-      let current: any = complexData.value
-      for (let i = 0; i < keys.length - 1; i++) {
-        current = current[keys[i]]
-      }
-      
-      let finalValue = newData.value
-      if (old.type === newData.type && newData.type === 'number' && typeof newData.value === 'string') {
-        finalValue = !isNaN(newData.value) ? Number(newData.value) : old.value
-      } else if (old.type !== newData.type) {
-        finalValue = newData.value
-      } else {
-        finalValue = newData.value
-      }
-      
-      current[keys[keys.length - 1]] = finalValue
-    }
+const handleFullyEditableChange = createUnifiedHandler(
+  (fn: (prev: any) => any) => { fullyEditableData.value = fn(fullyEditableData.value) }, 
+  { 
+    delayMs: 200,
+    logPrefix: 'Fully editable'
   }
+)
 
-  return { code: 0 }
-}
-
-// Handler for array data
-const handleArrayChange = async (path: string, changeData: any) => {
-  const { old, new: newData, _action, _parentPath, _itemPath } = changeData
-  console.log('Array change:', { path, _action, _parentPath, _itemPath, changeData })
-  
-  // For pseudo-related actions, execute immediately without delay (just UI state)
-  switch (_action) {
-    case 'addItem':
-    case 'addItemAbove':
-    case 'addItemBelow':
-    case 'cancelCreate':
-      switch (_action) {
-        case 'addItem':
-        case 'addItemAbove':
-        case 'addItemBelow': {
-          // Add pseudo item to array - direct mutation
-          const pathIsArray = path.includes('..')
-          if (pathIsArray) {
-            // Parse path like "..0" or "..1"
-            const parts = path.split('..')
-            let current: any = arrayData.value
-            
-            // Navigate through array indices (except last)
-            for (let i = 1; i < parts.length - 1; i++) {
-              const index = parseInt(parts[i])
-              current = current[index]
-            }
-            
-            const targetIndex = parseInt(parts[parts.length - 1])
-            if (_action === 'addItemAbove') {
-              current.splice(targetIndex, 0, { isPseudo: true } as any)
-            } else if (_action === 'addItemBelow') {
-              current.splice(targetIndex + 1, 0, { isPseudo: true } as any)
-            }
-          } else {
-            // Empty array - add to it
-            if (Array.isArray(arrayData.value)) {
-              arrayData.value.push({ isPseudo: true } as any)
-            }
-          }
-          return { code: 0 }
-        }
-        case 'cancelCreate': {
-          // Remove pseudo item - direct mutation
-          const parts = path.split('..')
-          let current: any = arrayData.value
-          
-          // Navigate through array indices (except last)
-          for (let i = 1; i < parts.length - 1; i++) {
-            const index = parseInt(parts[i])
-            current = current[index]
-          }
-          
-          const targetIndex = parseInt(parts[parts.length - 1])
-          current.splice(targetIndex, 1)
-          return { code: 0 }
-        }
-      }
+const handleArrayChange = createUnifiedHandler(
+  (fn: (prev: any) => any) => { arrayData.value = fn(arrayData.value) }, 
+  { 
+    delayMs: 200,
+    logPrefix: 'Array'
   }
-  
-  // For actual data operations, apply delay
-  await new Promise(resolve => setTimeout(resolve, 200))
+)
 
-  // Parse path: ..5..0 -> [5, 0]
-  const pathParts = path.split('..').filter((p: string) => p !== '').map((p: string) => parseInt(p))
-  
-  if (_action === 'createItem') {
-    // Convert pseudo array item to real item - direct mutation
-    let current: any = arrayData.value
-    for (let i = 0; i < pathParts.length - 1; i++) {
-      current = current[pathParts[i]]
-    }
-    const targetIndex = pathParts[pathParts.length - 1]
-    current[targetIndex] = newData.value
-    // Remove isPseudo flag if the value is an object
-    if (typeof current[targetIndex] === 'object' && current[targetIndex] !== null) {
-      delete current[targetIndex].isPseudo
-    }
-    return { code: 0 }
-  } else if (_action === 'deleteArrayItem') {
-    // Delete the item from array - direct mutation
-    let current: any = arrayData.value
-    for (let i = 0; i < pathParts.length - 1; i++) {
-      current = current[pathParts[i]]
-    }
-    current.splice(pathParts[pathParts.length - 1], 1)
-  } else if (_action === 'deleteParentArray') {
-    // Delete the parent array - direct mutation
-    if (_parentPath === '') {
-      arrayData.value = []  // Parent is root - must replace
-    } else {
-      const parentParts = _parentPath.split('..').filter((p: string) => p !== '').map((p: string) => parseInt(p))
-      let current: any = arrayData.value
-      for (let i = 0; i < parentParts.length - 1; i++) {
-        current = current[parentParts[i]]
-      }
-      current.splice(parentParts[parentParts.length - 1], 1)
-    }
-  } else if (_action === 'clearParentArray') {
-    // Clear all items in parent array - direct mutation
-    if (_parentPath === '') {
-      arrayData.value = []  // Parent is root - must replace
-    } else {
-      const parentParts = _parentPath.split('..').filter((p: string) => p !== '').map((p: string) => parseInt(p))
-      let current: any = arrayData.value
-      for (let i = 0; i < parentParts.length - 1; i++) {
-        current = current[parentParts[i]]
-      }
-      current[parentParts[parentParts.length - 1]] = []
-      // Trigger reactivity for nested array changes
-      triggerRef(arrayData)
-    }
-  } else {
-    // Normal value change - direct mutation
-    let finalValue = newData.value
-    if (old.type === newData.type && newData.type === 'number' && typeof newData.value === 'string') {
-      finalValue = !isNaN(newData.value) ? Number(newData.value) : old.value
-    } else if (old.type !== newData.type) {
-      finalValue = newData.value
-    } else {
-      finalValue = newData.value
-    }
-    
-    // Navigate to item and set value - direct mutation
-    let current: any = arrayData.value
-    for (let i = 0; i < pathParts.length - 1; i++) {
-      current = current[pathParts[i]]
-    }
-    current[pathParts[pathParts.length - 1]] = finalValue
-    // Trigger reactivity for nested array changes
-    triggerRef(arrayData)
+const handleMongoChange = createUnifiedHandler(
+  (fn: (prev: any) => any) => { mongoDoc.value = fn(mongoDoc.value) }, 
+  { 
+    delayMs: 200,
+    logPrefix: 'MongoDB'
   }
-
-  return { code: 0 }
-}
-
-// Handler for MongoDB document
-const handleMongoChange = async (path: string, changeData: any) => {
-  const { new: newData, _action, _key } = changeData
-  console.log('MongoDB change:', { path, _action, changeData })
-  
-  // For pseudo-related actions, execute immediately without delay (just UI state)
-  switch (_action) {
-    case 'addEntry':
-    case 'addEntryAbove':
-    case 'addEntryBelow':
-    case 'cancelCreate':
-    case 'addItem':
-    case 'addItemAbove':
-    case 'addItemBelow': {
-      // Handle pseudo items similar to handleEditableChange
-      const keys = path.split(/\.(?!\.)/).map(k => k.replace(/^\.\./, ''))
-      const isArray = path.includes('..')
-      
-      if (isArray) {
-        // Array operations
-        const parts = path.split('..')
-        let current: any = mongoDoc.value
-        
-        // Navigate to the array
-        if (parts[0]) {
-          const objKeys = parts[0].split('.')
-          for (const key of objKeys) {
-            current = current[key]
-          }
-        }
-        
-        // Navigate through nested arrays (except last)
-        for (let i = 1; i < parts.length - 1; i++) {
-          const index = parseInt(parts[i])
-          current = current[index]
-        }
-        
-        if (_action === 'cancelCreate') {
-          const targetIndex = parseInt(parts[parts.length - 1])
-          current.splice(targetIndex, 1)
-        } else if (_action === 'addItem') {
-          current.push({ isPseudo: true } as any)
-        } else {
-          const targetIndex = parseInt(parts[parts.length - 1])
-          if (_action === 'addItemAbove') {
-            current.splice(targetIndex, 0, { isPseudo: true } as any)
-          } else if (_action === 'addItemBelow') {
-            current.splice(targetIndex + 1, 0, { isPseudo: true } as any)
-          }
-        }
-      } else {
-        // Object operations
-        if (_action === 'cancelCreate') {
-          const parentObj = keys.length === 0 || keys[0] === '' ? mongoDoc.value : keys.slice(0, -1).reduce((obj: any, key) => obj[key], mongoDoc.value)
-          const pseudoKey = keys[keys.length - 1]
-          delete parentObj[pseudoKey]
-        } else if (_action === 'addEntry') {
-          const targetObj = keys.length === 0 || keys[0] === '' ? mongoDoc.value : keys.reduce((obj: any, key) => obj[key], mongoDoc.value)
-          const pseudoKey = `__pseudo__${Date.now()}`
-          targetObj[pseudoKey] = { __pseudo__: true }
-        } else {
-          const pseudoKey = `__pseudo__${Date.now()}`
-          ;(mongoDoc.value as any)[pseudoKey] = { 
-            __pseudo__: true,
-            position: _action === 'addEntryAbove' ? 'above' : 'below', 
-            referenceKey: keys[0]
-          }
-        }
-      }
-      return { code: 0, message: 'Success' }
-    }
-  }
-  
-  // For actual data operations, apply delay
-  await new Promise(resolve => setTimeout(resolve, 200))
-  
-  const isArray = path.includes('..')
-  
-  if (isArray) {
-    // Array path handling
-    const pathParts = path.split('..').filter((p: string) => p !== '')
-    
-    if (_action === 'createItem') {
-      // Navigate to array item
-      let current: any = mongoDoc.value
-      if (pathParts[0]) {
-        const objKeys = pathParts[0].split('.')
-        for (const key of objKeys) {
-          current = current[key]
-        }
-      }
-      for (let i = 1; i < pathParts.length - 1; i++) {
-        current = current[parseInt(pathParts[i])]
-      }
-      const targetIndex = parseInt(pathParts[pathParts.length - 1])
-      current[targetIndex] = newData.value
-      if (typeof current[targetIndex] === 'object' && current[targetIndex] !== null) {
-        delete current[targetIndex].isPseudo
-      }
-    } else if (_action === 'deleteArrayItem') {
-      let current: any = mongoDoc.value
-      if (pathParts[0]) {
-        const objKeys = pathParts[0].split('.')
-        for (const key of objKeys) {
-          current = current[key]
-        }
-      }
-      for (let i = 1; i < pathParts.length - 1; i++) {
-        current = current[parseInt(pathParts[i])]
-      }
-      current.splice(parseInt(pathParts[pathParts.length - 1]), 1)
-    } else {
-      // Value change in array
-      let current: any = mongoDoc.value
-      if (pathParts[0]) {
-        const objKeys = pathParts[0].split('.')
-        for (const key of objKeys) {
-          current = current[key]
-        }
-      }
-      for (let i = 1; i < pathParts.length - 1; i++) {
-        current = current[parseInt(pathParts[i])]
-      }
-      current[parseInt(pathParts[pathParts.length - 1])] = newData.value
-    }
-  } else {
-    // Object path handling
-    const keys = path.split('.')
-    
-    if (_action === 'createEntry') {
-      const parentObj = keys.length === 0 || keys[0] === '' ? mongoDoc.value : keys.slice(0, -1).reduce((obj: any, key) => obj[key], mongoDoc.value)
-      const pseudoKey = keys[keys.length - 1]
-      const pseudoData = parentObj[pseudoKey]
-      
-      if (pseudoData && pseudoData.position && pseudoData.referenceKey) {
-        const newParentObj: any = {}
-        for (const key of Object.keys(parentObj)) {
-          if (key === pseudoKey) continue
-          if (key === pseudoData.referenceKey) {
-            if (pseudoData.position === 'above') {
-              newParentObj[_key] = newData.value
-              newParentObj[key] = parentObj[key]
-            } else {
-              newParentObj[key] = parentObj[key]
-              newParentObj[_key] = newData.value
-            }
-          } else {
-            newParentObj[key] = parentObj[key]
-          }
-        }
-        Object.keys(parentObj).forEach(k => delete parentObj[k])
-        Object.assign(parentObj, newParentObj)
-      } else {
-        delete parentObj[pseudoKey]
-        parentObj[_key] = newData.value
-      }
-    } else if (_action === 'deleteEntry') {
-      let current: any = mongoDoc.value
-      for (let i = 0; i < keys.length - 1; i++) {
-        current = current[keys[i]]
-      }
-      delete current[keys[keys.length - 1]]
-    } else {
-      // Normal value change
-      let current: any = mongoDoc.value
-      for (let i = 0; i < keys.length - 1; i++) {
-        current = current[keys[i]]
-      }
-      current[keys[keys.length - 1]] = newData.value
-    }
-  }
-  
-  return { code: 0, message: 'MongoDB document updated' }
-}
+)
 </script>

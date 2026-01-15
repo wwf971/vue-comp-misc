@@ -24,6 +24,18 @@
     <component :is="valueComponent" v-bind="valueComponentProps">
       <slot />
     </component>
+    
+    <span v-if="isKeyProcessing" class="json-spinner" style="margin-left: 8px">
+      <SpinningCircle :width="14" :height="14" color="#666" />
+    </span>
+    
+    <span v-if="keyError" class="json-error" style="color: #f44336; margin-left: 8px; font-size: 13px">
+      {{ keyError }}
+    </span>
+    
+    <span v-if="keyWarning" class="json-warning" style="color: #ff9800; margin-left: 8px; font-size: 13px">
+      ⚠ {{ keyWarning }}
+    </span>
   </div>
 </template>
 
@@ -47,6 +59,7 @@ interface Props {
   isValueEditable: boolean
   onChange?: (path: string, changeData: any) => Promise<{ code: number; message?: string }>
   depth: number
+  keyOperationState?: { path: string; isProcessing?: boolean; error?: string | null; warning?: string | null } | null
 }
 
 const props = defineProps<Props>()
@@ -67,6 +80,12 @@ const isPrimitive = computed(() =>
 const valueType = computed(() => 
   props.value === null || props.value === undefined ? 'null' : typeof props.value
 )
+
+// Check if this key has an ongoing operation or error
+const hasKeyOperation = computed(() => props.keyOperationState && props.keyOperationState.path === props.path)
+const isKeyProcessing = computed(() => hasKeyOperation.value && props.keyOperationState?.isProcessing)
+const keyError = computed(() => hasKeyOperation.value && props.keyOperationState?.error)
+const keyWarning = computed(() => hasKeyOperation.value && props.keyOperationState?.warning)
 
 watch(isEditingKey, async (newVal) => {
   if (newVal) {
