@@ -5,16 +5,10 @@ import TabsOnTop from '../layout/tabs/TabsOnTop.vue'
 import TabsOnTopExample from '../layout/tabs/exampleTabsOnTop.vue'
 import JsonComp from '../layout/json/JsonComp.vue'
 import JsonCompExample from '../layout/json/example.vue'
-
-// Define example components structure
-export interface ComponentExample {
-  component: any
-  description: string
-  example: any
-}
+import { iconExamples } from '../icon/example'
 
 // Combine all examples into a single object
-export const components: Record<string, ComponentExample> = {
+export const components = {
   'MasterDetail': {
     component: MasterDetail,
     description: 'Master-detail layout with tabs and panels',
@@ -29,6 +23,7 @@ export const components: Record<string, ComponentExample> = {
     component: JsonComp,
     description: 'Display and edit deeply nested JSON-like objects with async updates',
     example: JsonCompExample
-  }
+  },
+  ...iconExamples
 }
 

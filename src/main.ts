@@ -1,5 +1,5 @@
 import { createApp } from 'vue'
-import App from './App.vue'
+import DevPage from './test-page/DevPage.vue'
 
-createApp(App).mount('#app')
+createApp(DevPage).mount('#app')
 
