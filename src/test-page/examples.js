@@ -6,6 +6,8 @@ import TabsOnTopExample from '../layout/tabs/exampleTabsOnTop.vue'
 import JsonComp from '../layout/json/JsonComp.vue'
 import JsonCompExample from '../layout/json/example.vue'
 import { iconExamples } from '../icon/example'
+import { menuExamples } from '../menu/example'
+import { panelExamples } from '../panel/example'
 
 // Combine all examples into a single object
 export const components = {
@@ -24,6 +26,8 @@ export const components = {
     description: 'Display and edit deeply nested JSON-like objects with async updates',
     example: JsonCompExample
   },
-  ...iconExamples
+  ...iconExamples,
+  ...menuExamples,
+  ...panelExamples
 }
 
