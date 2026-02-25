@@ -1,0 +1,73 @@
+.html-render {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+.html-render-title {
+  font-size: 16px;
+  font-weight: 600;
+  padding: 8px 12px;
+  background: #f5f5f5;
+  border-bottom: 1px solid #ddd;
+}
+
+.html-render-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.html-render-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+.html-render-label {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 8px;
+  background: #fafafa;
+  border-bottom: 1px solid #e0e0e0;
+  color: #333;
+}
+
+.html-render-textarea {
+  flex: 1;
+  width: 100%;
+  padding: 8px;
+  border: none;
+  outline: none;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: none;
+  background: #fff;
+  color: #333;
+}
+
+.html-render-textarea:read-only {
+  background: #f9f9f9;
+  color: #666;
+}
+
+.html-render-output {
+  flex: 1;
+  padding: 12px;
+  overflow: auto;
+  background: #fff;
+}
+
+.html-render-error {
+  flex: 1;
+  padding: 12px;
+  background: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffeaa7;
+  font-family: monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow: auto;
+}

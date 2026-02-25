@@ -24,7 +24,7 @@
           class="clear-button"
           @click="searchTerm = ''"
         >
-          ×
+          <CrossIcon :width="16" :height="16" />
         </button>
       </div>
       <div class="component-list">
@@ -56,9 +56,10 @@
   </div>
 </template>
 
-<script setup lang="ts">
+<script setup>
 import { ref, computed } from 'vue'
 import { components } from './examples'
+import CrossIcon from '../icon/CrossIcon.vue'
 
 const searchTerm = ref('')
 const compSelectedStr = ref('MasterDetail')

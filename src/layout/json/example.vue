@@ -338,15 +338,30 @@ const createUnifiedHandler = (setData: (fn: (prev: any) => any) => void, options
       const result = JSON.parse(JSON.stringify(prevData) as string)
       const segments = parsePathToSegments(path)
       
-      // Handle key rename (special case)
+      // Handle key rename (special case) - preserve position
       if (_keyRename) {
         const parent = navigateToPath(result, segments, true)
         const lastSeg = segments[segments.length - 1]
         const oldKey = lastSeg.key
         const newKey = newData.value
         const value = parent[oldKey!]
-        delete parent[oldKey!]
-        parent[newKey] = value
+        
+        // Rebuild object to preserve key order
+        const keys = Object.keys(parent)
+        const newParent: any = {}
+        keys.forEach(k => {
+          if (k === oldKey) {
+            newParent[newKey] = value
+          } else {
+            newParent[k] = parent[k]
+          }
+        })
+        
+        // Replace parent's keys
+        Object.keys(parent).forEach(k => delete parent[k])
+        Object.keys(newParent).forEach(k => {
+          parent[k] = newParent[k]
+        })
       } else if (_action === 'mergeDictWithJson') {
         // Merge dict entries below the current entry
         const currentKey = changeData._currentKey
